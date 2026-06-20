@@ -356,8 +356,11 @@ class KrakenClient:
         self.health = health
     
     def _request(self, endpoint: str, params: Dict, retries: int = 3) -> Optional[Dict]:
-        base_url = Config.KRAKEN_API.rstrip('/')
-        url = f"{base_url}/{endpoint}"
+               #  ΣΩΣΤΟ 
+        base_url = "https://futures.kraken.com/derivatives/api/v3"
+        symbol = "PF_XBTUSD"  # Προσοχή στο όνομα του asset για τα Futures
+        
+        url = f"{base_url}/tickers/{symbol}"
         start = time.time()
         
         for attempt in range(retries):
