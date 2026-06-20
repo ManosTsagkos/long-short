@@ -159,6 +159,54 @@ class HealthMetrics:
             logger.warning(f"High latency: {self.api_latency_ms:.0f}ms")
         return True, "OK"
 
+# =============================================================================
+# CIRCUIT BREAKER
+# =============================================================================
+
+class CircuitBreaker:
+    """Prevent cascade failures by stopping trading after consecutive errors."""
+    
+    def __init__(self, health: HealthMetrics):
+        self.health = health
+    
+    def record_success(self):
+        """Reset failure counter on success."""
+        if self.health.consecutive_failures > 0:
+            logger.debug(f"Resetting failure counter from {self.health.consecutive_failures}")
+        self.health.consecutive_failures = 0
+    
+    def record_failure(self) -> bool:
+        """Record failure and return True if circuit should open."""
+        self.health.consecutive_failures += 1
+        logger.warning(f"Failure recorded ({self.health.consecutive_failures}/{Config.CIRCUIT_BREAKER_FAILURES})")
+        
+        if self.health.consecutive_failures >= Config.CIRCUIT_BREAKER_FAILURES:
+            self.open_circuit()
+            return True
+        return False
+    
+    def open_circuit(self):
+        """Open circuit breaker."""
+        logger.error(f"🔴 CIRCUIT BREAKER OPENED after {self.health.consecutive_failures} failures")
+        self.health.circuit_open = True
+        self.health.circuit_opened_at = datetime.utcnow()
+    
+    def is_open(self) -> bool:
+        """Check if circuit is open (with auto-recovery)."""
+        if not self.health.circuit_open:
+            return False
+        
+        # Check auto-recovery
+        if self.health.circuit_opened_at:
+            elapsed = (datetime.utcnow() - self.health.circuit_opened_at).total_seconds()
+            if elapsed > Config.CIRCUIT_BREAKER_TIMEOUT:
+                logger.info("🟢 Circuit breaker auto-recovery triggered")
+                self.health.circuit_open = False
+                self.health.consecutive_failures = 0
+                self.health.circuit_opened_at = None
+                return False
+        
+        return True
 
 @dataclass
 class PositionSizing:
