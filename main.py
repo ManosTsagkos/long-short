@@ -77,7 +77,7 @@ class Config:
     STATE_FILE = Path(os.getenv("BUD_STATE_FILE", "institutional_bot_state.json"))
     LOG_LEVEL = os.getenv("BUD_LOG_LEVEL", "INFO")
     
-    KRAKEN_API = "https://futures.kraken.com/derivatives/api/v3/"
+    KRAKEN_API = "https://futures.kraken.com/derivatives/api/v3/PF_BTCUSDT"
 
 
 # =============================================================================
