@@ -389,7 +389,7 @@ class KrakenClient:
         if result and 'tickers' in result:
             for ticker in result['tickers']:
                 if ticker.get('symbol').upper() == f"PF_{Config.SYMBOL}".upper():
-                    return float(ticker['last'])
+                    return result
         return None
     
     def get_ohlc(self, interval: int = 240, limit: int = 100) -> Optional[pd.DataFrame]:
