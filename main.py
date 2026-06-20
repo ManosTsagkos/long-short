@@ -329,22 +329,27 @@ class KrakenClient:
         self.health = health
     
     def _request(self, endpoint: str, params: Dict, retries: int = 3) -> Optional[Dict]:
-        url = f"{Config.KRAKEN_API}}"
+        # Καθαρή ένωση του Base URL με το συγκεκριμένο endpoint
+        # Σιγουρέψου ότι το Config.KRAKEN_API είναι το: https://futures.kraken.com/derivatives/api/v3
+        base_url = Config.KRAKEN_API.rstrip('/')
+        url = f"{base_url}/{endpoint}"
         start = time.time()
         
         for attempt in range(retries):
             try:
-                r = requests.get(url, timeout=10)
+                r = requests.get(url, params=params, timeout=10)
                 self.health.api_latency_ms = (time.time() - start) * 1000
                 self.health.last_api_call = datetime.utcnow()
                 
                 r.raise_for_status()
                 data = r.json()
-                if data.get('error'):
-                    raise RuntimeError(data['error'])
+                
+                # Στα Futures το top-level 'result' επιστρέφει το string "success"
+                if data.get('result') != 'success':
+                    raise RuntimeError(data.get('error', 'Unknown Futures API Error'))
                 
                 self.health.consecutive_failures = 0
-                return data['result']
+                return data  # Επιστρέφουμε όλο το JSON response
                 
             except Exception as e:
                 logger.warning(f"Attempt {attempt+1}/{retries} failed: {e}")
@@ -355,56 +360,51 @@ class KrakenClient:
     
     def get_price(self) -> Optional[float]:
         """Get current price - fast for emergency checks."""
-        # Αν η μέθοδος δέχεται κενό dictionary για παραμέτρους:
         result = self._request(f"tickers/PF_{Config.SYMBOL}", {})
-        if result:
-            pair_key = list(result.keys())[0]
-            return float(result[pair_key]['c'][0])
+        if result and 'tickers' in result:
+            # Φιλτράρισμα της λίστας για να βρούμε το σωστό ticker
+            for ticker in result['tickers']:
+                if ticker.get('symbol').upper() == f"PF_{Config.SYMBOL}".upper():
+                    return float(ticker['last'])
         return None
     
-   def get_ohlc(self, interval: int = 240, limit: int = 100) -> Optional[pd.DataFrame]:
-    """Get candles for signal generation."""
-    # 1. Χάρτης μετατροπής των λεπτών (Spot) σε resolutions των Futures
-    resolution_map = {
-        1: "1m",
-        5: "5m",
-        15: "15m",
-        30: "30m",
-        60: "1h",
-        240: "4h",
-        1440: "1d"
-    }
-    
-    # Παίρνουμε το σωστό string (π.χ. "4h"). Αν δεν υπάρχει, βάζουμε default το "4h"
-    resolution = resolution_map.get(interval, "4h")
-    
-    # 2. Χτίζουμε το σωστό Futures Endpoint
-    # Θα βγει: charts/trade/PF_XBTUSD/4h
-    endpoint = f"charts/trade/PF_{Config.SYMBOL}/{resolution}"
-    
-    # 3. Καλούμε το request χωρίς τις παλιές παραμέτρους του Spot
-    result = self._request(endpoint, {})
-    
-    # Επιστροφή του result (Δες την προειδοποίηση παρακάτω για το parsing!)
-    return result
+    def get_ohlc(self, interval: int = 5, limit: int = 100) -> Optional[pd.DataFrame]:
+        """Get candles for signal generation - Defaulted to 5 minutes."""
+        # Χάρτης μετατροπής λεπτών σε Futures Resolution Strings
+        resolution_map = {
+            1: "1m",
+            5: "5m",
+            15: "15m",
+            30: "30m",
+            60: "1h",
+            240: "4h",
+            1440: "1d"
+        }
         
-        if not result:
+        resolution = resolution_map.get(interval, "5m")
+        endpoint = f"charts/trade/PF_{Config.SYMBOL}/{resolution}"
+        
+        result = self._request(endpoint, {})
+        
+        if not result or 'candles' not in result:
             return None
         
-        pair_key = list(result.keys())[0]
-        raw = result[pair_key]
+        # Τα Futures επιστρέφουν flat λίστα στο key 'candles'
+        raw_candles = result['candles']
         
-        df = pd.DataFrame(raw, columns=[
-            "time", "open", "high", "low", "close", "vwap", "volume", "count"
-        ])
+        df = pd.DataFrame(raw_candles)
         
-        for col in ["open", "high", "low", "close", "vwap", "volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        # Μετατροπή των βασικών στηλών σε αριθμητική μορφή
+        for col in ["open", "high", "low", "close", "volume"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
         
-        df["close_time"] = pd.to_datetime(df["time"], unit="s", utc=True) + \
-                          pd.Timedelta(minutes=interval)
+        # Στα Futures ο χρόνος είναι σε milliseconds (ms), γι' αυτό χρησιμοποιούμε unit="ms"
+        if "time" in df.columns:
+            df["close_time"] = pd.to_datetime(df["time"], unit="ms", utc=True) + \
+                              pd.Timedelta(minutes=interval)
         
-        df = df.iloc[:-1]  # Drop incomplete
+        df = df.iloc[:-1]  # Αφαίρεση του τρέχοντος μη ολοκληρωμένου κεριού
         
         self.health.last_price_update = datetime.utcnow()
         return df.reset_index(drop=True)
@@ -423,7 +423,7 @@ class MacroDataFetcher:
             return False
         return (datetime.utcnow() - self.last_fetch).seconds < self.cache_ttl
     
-    def get_vix(self) -> float:
+    def get_vix(self) -> Tuple[float, float]:
         try:
             if not self._is_cached() or 'vix' not in self.cache:
                 vix = yf.Ticker("^VIX")
@@ -461,7 +461,6 @@ class MacroDataFetcher:
             price_current=price,
             price_previous=prev_price
         )
-
 
 # =============================================================================
 # SIGNAL ENGINE (4H only)
