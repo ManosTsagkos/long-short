@@ -329,7 +329,7 @@ class KrakenClient:
         self.health = health
     
     def _request(self, endpoint: str, params: Dict, retries: int = 3) -> Optional[Dict]:
-        url = f"{Config.KRAKEN_API}/{endpoint}"
+        url = f"{Config.KRAKEN_API}}"
         start = time.time()
         
         for attempt in range(retries):
