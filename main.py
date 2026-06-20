@@ -1,5 +1,5 @@
 """
-bud_style_btc_signal_bot.py
+main.py
 
 An ORIGINAL, independently-built BTC composite signal bot for WunderTrading.
 
