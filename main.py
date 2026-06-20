@@ -355,14 +355,20 @@ def send_wunder_signal(direction):
 
 
 def run_once(state):
-    # ... fetch your data into 'closed' ...
-    
-    if closed is None or len(closed) == 0:
-        logger.warning("No closed data available")
+    # Φόρτωσε τα klines/candles
+    try:
+        closed = get_klines(limit=200)
+    except Exception as e:
+        log.error(f"Failed to fetch klines: {e}")
         return state
     
-    # Now safe to access
+    if closed is None or len(closed) == 0:
+        log.warning("No closed data available")  # όχι logger
+        return state
+    
+    # Τώρα μπορείς να συνεχίσεις με ασφάλεια
     last_closed_time = closed["close_time"].iloc[-1].isoformat()
+    
 
     if state["last_closed_candle"] == last_closed_time:
         return state  # already evaluated this candle
