@@ -355,7 +355,8 @@ class KrakenClient:
     
     def get_price(self) -> Optional[float]:
         """Get current price - fast for emergency checks."""
-        result = self._request("Ticker", {"pair": Config.SYMBOL})
+        # Αν η μέθοδος δέχεται κενό dictionary για παραμέτρους:
+        result = self._request(f"tickers/PF_{Config.SYMBOL}", {})
         if result:
             pair_key = list(result.keys())[0]
             return float(result[pair_key]['c'][0])
