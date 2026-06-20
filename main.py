@@ -1,43 +1,9 @@
 """
-main.py
+main.py - Kraken Version
 
-An ORIGINAL, independently-built BTC composite signal bot for WunderTrading.
-
-IMPORTANT: This is NOT a copy of budsignal.io's proprietary algorithm.
-Their landing page is marketing copy. It discloses the *categories* of data
-they say they use (order-flow "pressure", technical "momentum", liquidation
-"liquidity"), but not their exact formulas, weights, lookbacks, or
-thresholds -- that's the paid product, and it isn't published anywhere.
-There is nothing to "copy" from a page that doesn't show its math.
-
-What follows is a comparable, from-scratch implementation of the same
-*category* of system (a multi-factor composite that needs independent
-signals to agree before firing), built entirely on public Binance Futures
-data, with a real, documented integration into WunderTrading's Signal Bot.
-
-PILLARS (each returns -1 / 0 / +1):
-    1. Momentum  - EMA21 vs EMA55 trend, MACD histogram sign, RSI vs 50
-    2. Pressure  - Open-interest/price divergence, taker buy/sell
-                   aggression, whale (top-trader) vs retail (global account)
-                   positioning delta, order-book depth imbalance
-    3. Liquidity - Funding-rate extremes (crowded-side liquidation risk)
-                   and proximity to recent swing high/low (where stops and
-                   liquidations cluster)
-
-COMPOSITE RULE:
-    - At least 2 of the 3 pillars must agree on direction.
-    - That agreement must hold for RECONFIRM_BARS consecutive closed
-      candles before a signal actually fires (reduces chop/whipsaw).
-    - Otherwise the engine outputs WAIT and sends nothing.
-
-On a confirmed state change, the bot POSTs JSON to your WunderTrading
-Signal Bot webhook (default: https://wtalerts.com/bot/custom), using the
-field names from WunderTrading's own JSON schema (code, orderType,
-amountPerTrade, leverage, stopLoss, takeProfits, etc.).
-
-THIS IS NOT FINANCIAL ADVICE. Backtest and paper-trade extensively before
-risking real capital. No combination of indicators predicts price; this
-only formalizes a rule set so it can run unattended.
+BTC composite signal bot για WunderTrading με Kraken API.
+Το Kraken δεν έχει Futures data (OI, funding, etc.), 
+οπότε χρησιμοποιούμε μόνο price-based indicators.
 """
 
 import os
@@ -52,125 +18,112 @@ import numpy as np
 import pandas as pd
 
 # --------------------------------------------------------------------------
-# CONFIG  (override via environment variables / a .env file)
+# CONFIG
 # --------------------------------------------------------------------------
 
-SYMBOL = os.getenv("BUD_SYMBOL", "BTCUSDT")
-INTERVAL = os.getenv("BUD_INTERVAL", "4h")            # 4H matches the swing-trade framing
+SYMBOL = os.getenv("BUD_SYMBOL", "XBTUSD")  # Kraken uses XBTUSD
+INTERVAL = os.getenv("BUD_INTERVAL", "240")  # 240 minutes = 4h
 RECONFIRM_BARS = int(os.getenv("BUD_RECONFIRM_BARS", "1"))
 POLL_SECONDS = int(os.getenv("BUD_POLL_SECONDS", "60"))
 STATE_FILE = Path(os.getenv("BUD_STATE_FILE", "bud_bot_state.json"))
 
-WUNDER_WEBHOOK_URL = os.getenv("WUNDER_WEBHOOK_URL", "https://wtalerts.com/bot/custom")
+WUNDER_WEBHOOK_URL = os.getenv("WUNDER_WEBHOOK_URL", "https://wtalerts.com/bot/trading_view")
 WUNDER_LONG_CODE = os.getenv("WUNDER_LONG_CODE", "CHANGE-THIS-ENTER-LONG-COMMENT")
 WUNDER_SHORT_CODE = os.getenv("WUNDER_SHORT_CODE", "CHANGE-THIS-ENTER-SHORT-COMMENT")
 WUNDER_EXIT_CODE = os.getenv("WUNDER_EXIT_CODE", "CHANGE-THIS-EXIT-ALL-COMMENT")
 
-ORDER_TYPE = os.getenv("BUD_ORDER_TYPE", "market")               # "market" | "limit"
-AMOUNT_PER_TRADE_TYPE = os.getenv("BUD_AMOUNT_TYPE", "percents")  # "percents"|"quote"|"contracts"|"base"
-AMOUNT_PER_TRADE = float(os.getenv("BUD_AMOUNT_PER_TRADE", "0.1"))  # 0.1 = 10%
+ORDER_TYPE = os.getenv("BUD_ORDER_TYPE", "market")
+AMOUNT_PER_TRADE_TYPE = os.getenv("BUD_AMOUNT_TYPE", "percents")
+AMOUNT_PER_TRADE = float(os.getenv("BUD_AMOUNT_PER_TRADE", "0.1"))
 LEVERAGE = float(os.getenv("BUD_LEVERAGE", "2"))
-STOP_LOSS_PCT = float(os.getenv("BUD_STOP_LOSS_PCT", "0.015"))     # 1.5%
-TAKE_PROFIT_PCT = float(os.getenv("BUD_TAKE_PROFIT_PCT", "0.03"))  # 3%
+STOP_LOSS_PCT = float(os.getenv("BUD_STOP_LOSS_PCT", "0.015"))
+TAKE_PROFIT_PCT = float(os.getenv("BUD_TAKE_PROFIT_PCT", "0.03"))
 
-DRY_RUN = os.getenv("BUD_DRY_RUN", "true").lower() == "true"  # log only, don't POST
+DRY_RUN = os.getenv("BUD_DRY_RUN", "true").lower() == "true"
 
-BINANCE_FAPI = "https://api.kraken.com/0/public"
-
+KRAKEN_API = "https://api.kraken.com/0/public"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-log = logging.getLogger("bud_style_bot")
+log = logging.getLogger("kraken_bot")
+
 
 # --------------------------------------------------------------------------
-# DATA FETCHING (Binance USDT-M Futures public endpoints — no API key needed)
+# DATA FETCHING (Kraken)
 # --------------------------------------------------------------------------
 
-
-def _get(path, params, retries=3):
-    url = f"{BINANCE_FAPI}{path}"
+def _get(endpoint, params, retries=3):
+    url = f"{KRAKEN_API}/{endpoint}"
     for attempt in range(retries):
         try:
             r = requests.get(url, params=params, timeout=10)
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            if data.get("error"):
+                raise RuntimeError(f"Kraken API error: {data['error']}")
+            return data["result"]
         except requests.RequestException as e:
-            log.warning(f"GET {path} failed ({e}); retry {attempt + 1}/{retries}")
+            log.warning(f"GET {endpoint} failed ({e}); retry {attempt + 1}/{retries}")
             time.sleep(2 * (attempt + 1))
-    raise RuntimeError(f"Could not fetch {path} after {retries} retries")
+    raise RuntimeError(f"Could not fetch {endpoint} after {retries} retries")
 
 
 def get_klines(limit=200):
-    raw = _get("/fapi/v1/klines", {"symbol": SYMBOL, "interval": INTERVAL, "limit": limit})
+    """
+    Kraken OHLC format: [[time, open, high, low, close, vwap, volume, count], ...]
+    """
+    result = _get("OHLC", {"pair": SYMBOL, "interval": INTERVAL, "since": 0})
+    
+    # Get the data array (key is the pair name, e.g., "XXBTZUSD" or "XBTUSD")
+    pair_key = list(result.keys())[0]
+    raw = result[pair_key]
+    
+    # Take last 'limit' records
+    raw = raw[-limit:] if len(raw) > limit else raw
+    
     df = pd.DataFrame(raw, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "trades",
-        "taker_buy_base", "taker_buy_quote", "ignore",
+        "time", "open", "high", "low", "close", "vwap", "volume", "count"
     ])
-    for col in ["open", "high", "low", "close", "volume", "taker_buy_base"]:
+    
+    for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
-    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms", utc=True)
+    
+    df["open_time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+    df["close_time"] = df["open_time"] + pd.Timedelta(minutes=int(INTERVAL))
+    
     return df
 
 
-def get_open_interest_hist(period="4h", limit=200):
-    raw = _get("/futures/data/openInterestHist", {"symbol": SYMBOL, "period": period, "limit": limit})
-    df = pd.DataFrame(raw)
-    df["sumOpenInterest"] = df["sumOpenInterest"].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    return df
-
-
-def get_taker_long_short_ratio(period="4h", limit=200):
-    raw = _get("/futures/data/takerlongshortratio", {"symbol": SYMBOL, "period": period, "limit": limit})
-    df = pd.DataFrame(raw)
-    df["buySellRatio"] = df["buySellRatio"].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    return df
-
-
-def get_top_trader_position_ratio(period="4h", limit=200):
-    """Proxy for 'whale' positioning: long/short ratio of top traders by position size."""
-    raw = _get("/futures/data/topLongShortPositionRatio", {"symbol": SYMBOL, "period": period, "limit": limit})
-    df = pd.DataFrame(raw)
-    df["longShortRatio"] = df["longShortRatio"].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    return df
-
-
-def get_global_account_ratio(period="4h", limit=200):
-    """Proxy for 'retail' positioning: long/short ratio across all accounts."""
-    raw = _get("/futures/data/globalLongShortAccountRatio", {"symbol": SYMBOL, "period": period, "limit": limit})
-    df = pd.DataFrame(raw)
-    df["longShortRatio"] = df["longShortRatio"].astype(float)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    return df
-
-
-def get_funding_rate(limit=50):
-    raw = _get("/fapi/v1/fundingRate", {"symbol": SYMBOL, "limit": limit})
-    df = pd.DataFrame(raw)
-    df["fundingRate"] = df["fundingRate"].astype(float)
-    df["fundingTime"] = pd.to_datetime(df["fundingTime"], unit="ms", utc=True)
-    return df
-
-
-def get_order_book_imbalance(depth_limit=100, band_pct=0.005):
-    raw = _get("/fapi/v1/depth", {"symbol": SYMBOL, "limit": depth_limit})
-    bids = pd.DataFrame(raw["bids"], columns=["price", "qty"]).astype(float)
-    asks = pd.DataFrame(raw["asks"], columns=["price", "qty"]).astype(float)
+def get_order_book_imbalance():
+    """
+    Get order book depth from Kraken and calculate imbalance.
+    Returns: -1 to +1 (negative = more asks, positive = more bids)
+    """
+    result = _get("Depth", {"pair": SYMBOL, "count": 100})
+    pair_key = list(result.keys())[0]
+    data = result[pair_key]
+    
+    bids = pd.DataFrame(data["bids"], columns=["price", "volume", "timestamp"])
+    asks = pd.DataFrame(data["asks"], columns=["price", "volume", "timestamp"])
+    
+    bids["price"] = bids["price"].astype(float)
+    bids["volume"] = bids["volume"].astype(float)
+    asks["price"] = asks["price"].astype(float)
+    asks["volume"] = asks["volume"].astype(float)
+    
     mid = (bids["price"].iloc[0] + asks["price"].iloc[0]) / 2
+    band_pct = 0.005  # 0.5% band
     band = mid * band_pct
-    bid_depth = bids[bids["price"] >= mid - band]["qty"].sum()
-    ask_depth = asks[asks["price"] <= mid + band]["qty"].sum()
+    
+    bid_depth = bids[bids["price"] >= mid - band]["volume"].sum()
+    ask_depth = asks[asks["price"] <= mid + band]["volume"].sum()
     total = bid_depth + ask_depth
-    return 0.0 if total == 0 else (bid_depth - ask_depth) / total  # range: -1..+1
+    
+    return 0.0 if total == 0 else (bid_depth - ask_depth) / total
 
 
 # --------------------------------------------------------------------------
-# INDICATORS (no external TA library required)
+# INDICATORS
 # --------------------------------------------------------------------------
-
 
 def ema(series, span):
     return series.ewm(span=span, adjust=False).mean()
@@ -193,107 +146,158 @@ def macd(series, fast=12, slow=26, signal=9):
     return macd_line, signal_line, hist
 
 
-# --------------------------------------------------------------------------
-# PILLAR VOTES  (-1 bearish, 0 neutral, +1 bullish)
-# --------------------------------------------------------------------------
+def atr(df, period=14):
+    """Average True Range for volatility"""
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+    
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
+    
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.ewm(span=period, adjust=False).mean()
 
+
+# --------------------------------------------------------------------------
+# PILLAR VOTES (Simplified for Kraken - no Futures data)
+# --------------------------------------------------------------------------
 
 def momentum_vote(df):
+    """
+    Technical momentum indicators only.
+    Returns: -1 (bearish), 0 (neutral), +1 (bullish)
+    """
     close = df["close"]
+    
+    # EMA trend
     ema_fast = ema(close, 21).iloc[-1]
     ema_slow = ema(close, 55).iloc[-1]
+    ema_vote = 1 if ema_fast > ema_slow else -1
+    
+    # MACD histogram
     _, _, hist = macd(close)
+    macd_vote = 1 if hist.iloc[-1] > 0 else -1
+    
+    # RSI
     rsi_val = rsi(close).iloc[-1]
-
-    votes = [1 if ema_fast > ema_slow else -1, 1 if hist.iloc[-1] > 0 else -1]
-    if rsi_val > 55:
-        votes.append(1)
-    elif rsi_val < 45:
-        votes.append(-1)
+    if rsi_val > 60:
+        rsi_vote = 1
+    elif rsi_val < 40:
+        rsi_vote = -1
     else:
-        votes.append(0)
-
+        rsi_vote = 0
+    
+    votes = [ema_vote, macd_vote, rsi_vote]
     nonzero = [v for v in votes if v != 0]
+    
     if len(nonzero) < 2:
         return 0
+    
     score = sum(nonzero)
     agree = sum(1 for v in nonzero if v == (1 if score > 0 else -1))
+    
     return (1 if score > 0 else -1) if agree >= 2 else 0
 
 
-def pressure_vote(df_price, df_oi, df_taker, df_top, df_global, ob_imbalance):
+def pressure_vote(df, ob_imbalance):
+    """
+    Price-based pressure + order book imbalance.
+    No OI or taker data on Kraken spot.
+    """
     votes = []
-
-    oi_chg = df_oi["sumOpenInterest"].iloc[-1] - df_oi["sumOpenInterest"].iloc[-3]
-    price_chg = df_price["close"].iloc[-1] - df_price["close"].iloc[-3]
-    if oi_chg > 0 and price_chg > 0:
-        votes.append(1)          # rising OI + rising price -> bullish continuation
-    elif oi_chg > 0 and price_chg < 0:
-        votes.append(-1)         # rising OI + falling price -> bearish continuation
+    
+    # Volume trend (increasing volume on trend = confirmation)
+    vol_sma = df["volume"].rolling(20).mean()
+    recent_vol = df["volume"].iloc[-3:].mean()
+    vol_trend = 1 if recent_vol > vol_sma.iloc[-1] else -1
+    
+    # Price trend direction
+    price_change = (df["close"].iloc[-1] - df["close"].iloc[-20]) / df["close"].iloc[-20]
+    if price_change > 0.02:  # +2%
+        votes.append(1)
+    elif price_change < -0.02:  # -2%
+        votes.append(-1)
     else:
-        votes.append(0)          # falling OI -> conviction unwinding, no read
-
-    buy_sell = df_taker["buySellRatio"].iloc[-1]
-    votes.append(1 if buy_sell > 1.0 else -1)
-
-    whale = df_top["longShortRatio"].iloc[-1]
-    retail = df_global["longShortRatio"].iloc[-1]
-    delta = whale - retail
-    votes.append((1 if delta > 0 else -1) if abs(delta) > 0.05 else 0)
-
+        votes.append(0)
+    
+    # Volume confirmation
+    votes.append(vol_trend if abs(price_change) > 0.01 else 0)
+    
+    # Order book imbalance
     votes.append((1 if ob_imbalance > 0 else -1) if abs(ob_imbalance) > 0.1 else 0)
-
+    
     nonzero = [v for v in votes if v != 0]
     if len(nonzero) < 2:
         return 0
+    
     score = sum(nonzero)
     agree = sum(1 for v in nonzero if v == (1 if score > 0 else -1))
+    
     return (1 if score > 0 else -1) if agree / len(nonzero) >= 0.6 else 0
 
 
-def liquidity_vote(df_price, df_funding):
+def liquidity_vote(df):
+    """
+    Price-based liquidity analysis (support/resistance levels).
+    No funding rate on Kraken spot.
+    """
     votes = []
-
-    funding_now = df_funding["fundingRate"].iloc[-1]
-    if funding_now > 0.0004:
-        votes.append(-1)   # crowded longs paying shorts -> downside liq. risk skew
-    elif funding_now < -0.0004:
-        votes.append(1)    # crowded shorts -> upside squeeze risk skew
-    else:
-        votes.append(0)
-
-    lookback = df_price.tail(30)
+    
+    # Proximity to recent swing high/low
+    lookback = df.tail(30)
     swing_high, swing_low = lookback["high"].max(), lookback["low"].min()
-    last_close = df_price["close"].iloc[-1]
+    last_close = df["close"].iloc[-1]
     rng = swing_high - swing_low
+    
     if rng > 0:
         pos = (last_close - swing_low) / rng
-        votes.append(-1 if pos > 0.85 else (1 if pos < 0.15 else 0))
+        # Near resistance = bearish (potential rejection)
+        # Near support = bullish (potential bounce)
+        if pos > 0.85:
+            votes.append(-1)
+        elif pos < 0.15:
+            votes.append(1)
+        else:
+            votes.append(0)
     else:
         votes.append(0)
-
+    
+    # Volatility regime (ATR)
+    atr_val = atr(df).iloc[-1]
+    atr_sma = atr(df).rolling(20).mean().iloc[-1]
+    # High volatility = uncertainty = neutral/avoid
+    if atr_val > atr_sma * 1.5:
+        votes.append(0)  # Too volatile, no edge
+    else:
+        votes.append(0)
+    
     nonzero = [v for v in votes if v != 0]
     if not nonzero:
         return 0
+    
     score = sum(nonzero)
     return 1 if score > 0 else (-1 if score < 0 else 0)
 
 
 def composite_signal(m, p, l):
+    """Require 2 of 3 pillars to agree."""
     nonzero = [v for v in (m, p, l) if v != 0]
     if len(nonzero) < 2:
         return "WAIT"
+    
     score = sum(nonzero)
     agree = sum(1 for v in nonzero if v == (1 if score > 0 else -1))
+    
     if agree >= 2:
         return "LONG" if score > 0 else "SHORT"
     return "WAIT"
 
 
 # --------------------------------------------------------------------------
-# STATE  (so we don't re-fire on every poll, and can require reconfirmation)
+# STATE & WEBHOOK (unchanged)
 # --------------------------------------------------------------------------
-
 
 def load_state():
     if STATE_FILE.exists():
@@ -305,17 +309,7 @@ def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-# --------------------------------------------------------------------------
-# WUNDERTRADING WEBHOOK
-# --------------------------------------------------------------------------
-
-
 def send_wunder_signal(direction):
-    """
-    direction: "LONG" | "SHORT" | "EXIT"
-    Builds a JSON payload matching WunderTrading's Signal Bot JSON schema
-    and POSTs it to the bot's webhook URL.
-    """
     if direction == "LONG":
         code = WUNDER_LONG_CODE
     elif direction == "SHORT":
@@ -354,42 +348,40 @@ def send_wunder_signal(direction):
 # MAIN LOOP
 # --------------------------------------------------------------------------
 
-
 def run_once(state):
-    # Φόρτωσε τα klines/candles
+    # Fetch klines from Kraken
     try:
         closed = get_klines(limit=200)
+        log.info(f"Fetched {len(closed)} candles from Kraken")
     except Exception as e:
         log.error(f"Failed to fetch klines: {e}")
         return state
     
     if closed is None or len(closed) == 0:
-        log.warning("No closed data available")  # όχι logger
+        log.warning("No closed data available")
         return state
     
-    # Τώρα μπορείς να συνεχίσεις με ασφάλεια
     last_closed_time = closed["close_time"].iloc[-1].isoformat()
-    
 
     if state["last_closed_candle"] == last_closed_time:
         return state  # already evaluated this candle
 
-    log.info(f"New closed {INTERVAL} candle @ {last_closed_time} — evaluating pillars...")
+    log.info(f"New closed {INTERVAL}m candle @ {last_closed_time} — evaluating pillars...")
 
-    df_oi = get_open_interest_hist()
-    df_taker = get_taker_long_short_ratio()
-    df_top = get_top_trader_position_ratio()
-    df_global = get_global_account_ratio()
-    df_funding = get_funding_rate()
-    ob_imb = get_order_book_imbalance()
+    # Get order book data
+    try:
+        ob_imb = get_order_book_imbalance()
+    except Exception as e:
+        log.warning(f"Failed to get order book: {e}, using 0")
+        ob_imb = 0.0
 
     m = momentum_vote(closed)
-    p = pressure_vote(closed, df_oi, df_taker, df_top, df_global, ob_imb)
-    l = liquidity_vote(closed, df_funding)
+    p = pressure_vote(closed, ob_imb)
+    l = liquidity_vote(closed)
     direction = composite_signal(m, p, l)
 
     log.info(f"momentum={m:+d} pressure={p:+d} liquidity={l:+d} -> {direction} "
-              f"(close={closed['close'].iloc[-1]:.1f})")
+              f"(close={closed['close'].iloc[-1]:.2f}, ob_imb={ob_imb:+.3f})")
 
     if direction == state["pending_direction"]:
         state["pending_count"] += 1
@@ -411,7 +403,7 @@ def run_once(state):
 
 
 def main():
-    log.info(f"Starting composite {SYMBOL} {INTERVAL} signal bot "
+    log.info(f"Starting Kraken composite {SYMBOL} {INTERVAL}m signal bot "
               f"(reconfirm_bars={RECONFIRM_BARS}, dry_run={DRY_RUN})")
     state = load_state()
     while True:
