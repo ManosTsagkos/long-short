@@ -355,13 +355,14 @@ def send_wunder_signal(direction):
 
 
 def run_once(state):
-    df = get_klines(limit=200)
-    closed = df.iloc[:-1]  # drop the still-forming candle
-
-    if len(closed) > 0:
+    # ... fetch your data into 'closed' ...
+    
+    if closed is None or len(closed) == 0:
+        logger.warning("No closed data available")
+        return state
+    
+    # Now safe to access
     last_closed_time = closed["close_time"].iloc[-1].isoformat()
-    else:
-    last_closed_time = None  # or pd.Timestamp.now().isoformat() or "N/A"
 
     if state["last_closed_candle"] == last_closed_time:
         return state  # already evaluated this candle
