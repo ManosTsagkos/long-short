@@ -358,11 +358,10 @@ def run_once(state):
     df = get_klines(limit=200)
     closed = df.iloc[:-1]  # drop the still-forming candle
 
-    if closed is not None and not closed.empty:
+    if len(closed) > 0:
     last_closed_time = closed["close_time"].iloc[-1].isoformat()
     else:
-    last_closed_time = None  # ή κάποια άλλη default τιμή
-    print("No closed positions found, continuing...")
+    last_closed_time = None  # or pd.Timestamp.now().isoformat() or "N/A"
 
     if state["last_closed_candle"] == last_closed_time:
         return state  # already evaluated this candle
