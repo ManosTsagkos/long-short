@@ -35,7 +35,7 @@ WUNDER_EXIT_CODE = os.getenv("WUNDER_EXIT_CODE", "CHANGE-THIS-EXIT-ALL-COMMENT")
 ORDER_TYPE = os.getenv("BUD_ORDER_TYPE", "market")
 AMOUNT_PER_TRADE_TYPE = os.getenv("BUD_AMOUNT_TYPE", "percents")
 AMOUNT_PER_TRADE = float(os.getenv("BUD_AMOUNT_PER_TRADE", "0.1"))
-LEVERAGE = float(os.getenv("BUD_LEVERAGE", "2"))
+LEVERAGE = float(os.getenv("BUD_LEVERAGE", "6"))
 STOP_LOSS_PCT = float(os.getenv("BUD_STOP_LOSS_PCT", "0.015"))
 TAKE_PROFIT_PCT = float(os.getenv("BUD_TAKE_PROFIT_PCT", "0.03"))
 
