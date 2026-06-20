@@ -334,7 +334,7 @@ class KrakenClient:
         
         for attempt in range(retries):
             try:
-                r = requests.get(url, params=params, timeout=10)
+                r = requests.get(url, timeout=10)
                 self.health.api_latency_ms = (time.time() - start) * 1000
                 self.health.last_api_call = datetime.utcnow()
                 
