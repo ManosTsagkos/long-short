@@ -77,16 +77,9 @@ class Config:
     STATE_FILE = Path(os.getenv("BUD_STATE_FILE", "institutional_bot_state.json"))
     LOG_LEVEL = os.getenv("BUD_LOG_LEVEL", "INFO")
     
-    KRAKEN_API = "https://futures.kraken.com/derivatives/api/v3/tickers/PF_XBTUSD"
+    KRAKEN_API = "https://api.kraken.com/0/public"
 
-    try:
-        response = requests.get(KRAKEN_API)
-        response.raise_for_status()  # Θα πετάξει error αν δεν είναι 200 OK
-        data = response.json()
-        print("Success! Τα δεδομένα λήφθηκαν.")
-    except requests.exceptions.HTTPError as err:
-        print(f"Σφάλμα: {err}")
-
+   
 
 # =============================================================================
 # LOGGING
