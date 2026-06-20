@@ -23,9 +23,11 @@ jobs:
         run: pip install requests yfinance pandas feedparser vaderSentiment
 
       - name: Run script
-        env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          ENTER_LONG_MESSAGE: ${{ secrets.ENTER_LONG_MESSAGE }}
+          env:
+          WUNDER_WEBHOOK_URL: ${{ secrets.WUNDER_WEBHOOK_URL }}
+          WUNDER_LONG_CODE: ${{ secrets.WUNDER_LONG_CODE }}
+          WUNDER_SHORT_CODE: ${{ secrets.WUNDER_SHORT_CODE }}
+          WUNDER_EXIT_CODE: ${{ secrets.WUNDER_EXIT_CODE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
+          run: python main.py
