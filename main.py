@@ -75,7 +75,7 @@ TAKE_PROFIT_PCT = float(os.getenv("BUD_TAKE_PROFIT_PCT", "0.03"))  # 3%
 
 DRY_RUN = os.getenv("BUD_DRY_RUN", "true").lower() == "true"  # log only, don't POST
 
-BINANCE_FAPI = "https://fapi.binance.com"
+BINANCE_FAPI = "https://api.kraken.com/0/public/OHLC?pair=BTCUSD&interval=240"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("bud_style_bot")
