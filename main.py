@@ -362,13 +362,31 @@ class KrakenClient:
             return float(result[pair_key]['c'][0])
         return None
     
-    def get_ohlc(self, interval: int = 240, limit: int = 100) -> Optional[pd.DataFrame]:
-        """Get candles for signal generation."""
-        result = self._request("OHLC", {
-            "pair": Config.SYMBOL,
-            "interval": interval,
-            "since": 0
-        })
+   def get_ohlc(self, interval: int = 240, limit: int = 100) -> Optional[pd.DataFrame]:
+    """Get candles for signal generation."""
+    # 1. Χάρτης μετατροπής των λεπτών (Spot) σε resolutions των Futures
+    resolution_map = {
+        1: "1m",
+        5: "5m",
+        15: "15m",
+        30: "30m",
+        60: "1h",
+        240: "4h",
+        1440: "1d"
+    }
+    
+    # Παίρνουμε το σωστό string (π.χ. "4h"). Αν δεν υπάρχει, βάζουμε default το "4h"
+    resolution = resolution_map.get(interval, "4h")
+    
+    # 2. Χτίζουμε το σωστό Futures Endpoint
+    # Θα βγει: charts/trade/PF_XBTUSD/4h
+    endpoint = f"charts/trade/PF_{Config.SYMBOL}/{resolution}"
+    
+    # 3. Καλούμε το request χωρίς τις παλιές παραμέτρους του Spot
+    result = self._request(endpoint, {})
+    
+    # Επιστροφή του result (Δες την προειδοποίηση παρακάτω για το parsing!)
+    return result
         
         if not result:
             return None
